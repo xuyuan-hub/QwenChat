@@ -18,59 +18,63 @@ from .serializers import *
 if not cache.get('model_tokenlizer'):
     cache.set("model_tokenizer",backend_chat._load_model_tokenizer(),None)
 
-# Create your views here. 
 class ChatViewset(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    def post(self,request):
+
+    def post(self, request):
         content = request.data.get('content')
         role = 'user'
         user = request.user
-         # 获取conversation_id，并确保是有效的UUID
         conversation_id = request.data.get('conversation_id')
+
         if conversation_id:
             try:
-                # 如果conversation_id有效，尝试获取或创建 Conversation
-                conversation_id = uuid.UUID(conversation_id)  # 尝试转换为UUID
+                conversation_id = uuid.UUID(conversation_id)
                 conversation, created = Conversation.objects.get_or_create(
                     id=conversation_id, user=user, title='Test title'
                 )
             except ValueError:
                 return Response({'error': 'Invalid conversation_id format'}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            # 如果没有提供conversation_id，创建一个新的Conversation
             conversation = Conversation.objects.create(
                 user=user, title='Test title'
             )
+        
         msgs = ChatMessages.objects.filter(conversation=conversation)
-        serializer = ChatMessagesSerializer(msgs,many=True)
+        serializer = ChatMessagesSerializer(msgs, many=True)
         history = [{"role": msg["role"], "content": msg["content"]} for msg in serializer.data]
-        history.append({"role":role,"content":content})
-        model, tokenizer = cache.get("model_tokenizer")
+        history.append({"role": role, "content": content})
+
+        model_tokenizer = cache.get("model_tokenizer")
+        if not model_tokenizer:
+            return Response({'error': 'Model and tokenizer not available'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        model, tokenizer = model_tokenizer
+
         def generate_stream():
             partial_text = ""
-            for new_text in backend_chat.get_response_stream(model, tokenizer, history):
-                yield new_text  # 立即返回 token
-                partial_text += new_text
+            try:
+                for new_text in backend_chat.get_response_stream(model, tokenizer, history):
+                    yield f"data: {new_text}\n\n"  # 必须符合 SSE 格式
+                    partial_text += new_text
+            except Exception as e:
+                yield f"data: [ERROR] {str(e)}\n\n"  # 遇到错误时返回
+                return
+
             # 生成完成后存入数据库
             with transaction.atomic():
                 ChatMessages.objects.create(role=role, content=content, conversation=conversation)
-                ChatMessages.objects.create(
-                    role="assistant", content=partial_text, conversation=conversation
-                )
+                ChatMessages.objects.create(role="assistant", content=partial_text, conversation=conversation)
 
-        # serializer = ChatMessagesSerializer(msg)
-        return StreamingHttpResponse(generate_stream(), content_type="text/plain")
+        response = StreamingHttpResponse(generate_stream(), content_type="text/event-stream")  # 设置正确的响应头
+        return response
 
 class RegisterView(APIView):
-    def post(self,request):
-        try:
-            username = request.data.get('username')
-            email = request.data.get('email')
-            password = request.data.get('password')
-            user =  AuthUser.objects.create(username=username,email = email,password=password)
-            return Response({'message':"Register Success"},status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({'error':str(e)},status=status.HTTP_400_BAD_REQUEST)
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'message': "Register Success"}, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
 class LoginView(APIView):
     def post(self,request):
