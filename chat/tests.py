@@ -22,7 +22,7 @@ class UserApiTest(TestCase):
 
     def test_user_login_success(self):
         response = self.client.post(self.log_url, data={"username": "tuser1", "password": "123456"}, format='json')
-        print(response.data)
+        # print(response.data)
         self.assertEqual(response.status_code,status.HTTP_200_OK)
         
     def test_unregistered_user_login(self):
@@ -77,6 +77,13 @@ class ChatApiTest(TestCase):
         self.user2.set_password('123457')
         self.user2.save()
         
+        self.conversation1 = Conversation.objects.create(id=str(uuid.uuid4()),title='conversation1',user=self.user1)
+        self.conversation2 = Conversation.objects.create(id=str(uuid.uuid4()),title='conversation2',user=self.user2)
+        
+        self.msg1 = ChatMessages.objects.create(role="user",content="你好！",conversation=self.conversation1)
+        self.msg2 = ChatMessages.objects.create(role="assistant",content="您好，请问我有什么可以帮助你的吗？",conversation=self.conversation1)
+        self.msg3 = ChatMessages.objects.create(role="user",content="你好！",conversation=self.conversation2)
+
         self.client1 = APIClient()
         refresh = RefreshToken.for_user(self.user1)
         access_token = str(refresh.access_token)
@@ -86,8 +93,9 @@ class ChatApiTest(TestCase):
         refresh2 = RefreshToken.for_user(self.user2)
         access_token2 = str(refresh2.access_token)
         self.client2.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token2}')
-        
+    
         self.chat_url = '/chat/chat/'
+        self.chat_detail_url = lambda pk: f"/chat/chat/{pk}/"
         
     def test_chat_with_qwen(self):
         conversation_id = str(uuid.uuid4())
@@ -119,9 +127,24 @@ class ChatApiTest(TestCase):
         conversation = Conversation.objects.get(id=conversation_id)
         messages = ChatMessages.objects.filter(conversation=conversation)
         serializer = ChatMessagesSerializer(messages,many=True)
-        print(serializer.data)
+        # print(serializer.data)
 
         self.assertTrue(
             any(msg.role == "assistant" and msg.content == response_text for msg in messages),
             "AI 回复未正确存入数据库"
         )
+        
+    def test_get_all_conversation(self):
+        response = self.client1.get(self.chat_url,format='json')
+        self.assertEqual(response.status_code,status.HTTP_200_OK)
+        conversations = Conversation.objects.filter(user=self.user1)
+        serializer = ConversationSerializer(conversations,many=True)
+        self.assertEqual(response.data,serializer.data)
+        
+    def test_get_conversation_detail(self):
+        conversation = Conversation.objects.get(id=self.conversation1.id)
+        serializer = ConversationDetailSerializer(conversation)
+        response = self.client1.get(self.chat_detail_url(self.conversation1.id),format='json')
+        self.assertEqual(response.status_code,status.HTTP_200_OK)
+        self.assertEqual(response.data,serializer.data)
+        

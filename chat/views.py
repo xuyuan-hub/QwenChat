@@ -4,7 +4,10 @@ from django.core.cache import cache
 from django.http import StreamingHttpResponse
 from django.shortcuts import render
 from django.contrib.auth import authenticate
+from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
+from rest_framework import viewsets
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework import status,permissions
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -18,10 +21,26 @@ from .serializers import *
 if not cache.get('model_tokenlizer'):
     cache.set("model_tokenizer",backend_chat._load_model_tokenizer(),None)
 
-class ChatViewset(APIView):
+class ChatViewset(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
+    renderer_classes = [JSONRenderer]
+    
+    def list(self, request):
+        """处理 GET /chat/，返回当前用户的所有会话"""
+        user = request.user
+        conversations = Conversation.objects.filter(user=user)
+        serializer = ConversationSerializer(conversations, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    def post(self, request):
+    def retrieve(self, request, pk=None):
+        """处理 GET /chat/<id>/，返回指定会话的详情"""
+        user = request.user
+        # conversation = get_object_or_404(Conversation, id=pk, user=user)
+        conversation = Conversation.objects.get(id=pk)
+        serializer = ConversationDetailSerializer(conversation)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+            
+    def create(self, request):
         content = request.data.get('content')
         role = 'user'
         user = request.user
@@ -66,6 +85,7 @@ class ChatViewset(APIView):
                 ChatMessages.objects.create(role="assistant", content=partial_text, conversation=conversation)
 
         response = StreamingHttpResponse(generate_stream(), content_type="text/event-stream")  # 设置正确的响应头
+        response['Cache-Control'] = 'no-cache'
         return response
 
 class RegisterView(APIView):

@@ -4,12 +4,18 @@ from .models import *
 class ChatMessagesSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessages
-        fields = '__all__'
+        fields = ['id', 'role', 'content', 'start_time']
         
 class ConversationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conversation
-        fields = '__all__'
+        fields = ['id','title','start_date']
+        
+class ConversationDetailSerializer(serializers.ModelSerializer):
+    messages = ChatMessagesSerializer(many=True,read_only=True,source="conversation")
+    class Meta:
+        model = Conversation
+        fields = ['id','title','start_date','messages']
         
 class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
